@@ -13,16 +13,18 @@ include("scale/parallel_snapshot.jl")
 include("scale/benchmarks.jl")
 
 export
-    # Phase 1
-    polynomialize,
-    quadratize,
-    lift_system,
-    # Phase 2
-    generate_snapshots,
-    compute_pod_basis,
-    galerkin_project,
-    # Phase 3
-    generate_snapshots_parallel,
-    benchmark_scaling
+  # Phase 1
+  polynomialize,
+  quadratize,
+  lift_system,
+  # Phase 2
+  generate_snapshots,
+  compute_pod_basis,
+  galerkin_project,
+  extract_operators,
+  rom_rhs!,
+  # Phase 3
+  generate_snapshots_parallel,
+  benchmark_scaling
 
 end
