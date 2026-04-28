@@ -19,7 +19,7 @@ all available workers using @distributed.
 Before calling this, ensure workers are added:
     using Distributed
     addprocs(4)
-    @everywhere using LiftAndLearnMOR
+    @everywhere using SymbolicMOR
 
 Then:
     X = generate_snapshots_parallel(lorenz!, u0s, (0.0, 10.0))

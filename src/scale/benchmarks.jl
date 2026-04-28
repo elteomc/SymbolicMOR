@@ -59,3 +59,10 @@ function benchmark_serial_vs_parallel(
         speedup    = speedup
     )
 end
+
+"""
+    benchmark_scaling(args...; kwargs...)
+
+Alias for [`benchmark_serial_vs_parallel`](@ref). Exported for naming consistency with older docs.
+"""
+benchmark_scaling(args...; kwargs...) = benchmark_serial_vs_parallel(args...; kwargs...)

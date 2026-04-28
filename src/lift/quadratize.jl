@@ -17,6 +17,8 @@
 using Symbolics
 using Symbolics: value, get_variables
 
+const SymbolicUtils = Symbolics.SymbolicUtils
+
 # Public API
 
 """
@@ -78,15 +80,17 @@ function lift_system(vars::Vector{Num}, rhs::Vector{Num})
       _quadratize_expr(lifted_rhs[i], lifted_vars, aux_eqs, aux_counter)
   end
 
-  # Compute the time derivatives of aux vars (chain rule via their definitions)
-  aux_rhs = _differentiate_aux_vars(aux_eqs, vars, lifted_rhs[1:length(vars)])
-
-  # Append aux var derivatives (also need to be quadratized)
-  for drhs in aux_rhs
+  # Aux RHS via chain rule. Quadratizing those derivatives can append new equations to `aux_eqs`;
+  # continue until every current auxiliary definition has a corresponding RHS row (queue walk).
+  orig_rhs_segment = lifted_rhs[1:length(vars)]
+  aux_idx = 1
+  while aux_idx <= length(aux_eqs)
+    drhs = _aux_derivative_rhs(aux_eqs[aux_idx], vars, orig_rhs_segment)
     drhs_subst = _substitute_aux(drhs, aux_eqs)
     q, lifted_vars, aux_eqs =
       _quadratize_expr(drhs_subst, lifted_vars, aux_eqs, aux_counter)
     push!(lifted_rhs, q)
+    aux_idx += 1
   end
 
   return LiftedSystem(vars, lifted_vars, lifted_rhs, aux_eqs)
@@ -152,19 +156,18 @@ function _quadratize_monomial(mono::Num, vars::Vector{Num}, aux_eqs::Vector{Equa
 end
 
 """
-Compute time derivatives of auxiliary variables using the chain rule.
-
-dwi/dt = sum_j (dwi/dxj) * xj_dot
+Chain-rule time derivative of one auxiliary variable,
+``dw/dt = sum_j (dw/dx_j)(dx_j/dt)``, using dynamics ``dx_j/dt`` from `orig_rhs`.
 """
+function _aux_derivative_rhs(eq::Equation, orig_vars::Vector{Num}, orig_rhs::Vector{Num})
+  g = eq.rhs
+  dg_dt = sum(Symbolics.derivative(g, xj) * xj_dot
+              for (xj, xj_dot) in zip(orig_vars, orig_rhs))
+  return Symbolics.simplify(dg_dt)
+end
+
 function _differentiate_aux_vars(aux_eqs::Vector{Equation}, orig_vars::Vector{Num}, orig_rhs::Vector{Num})
-  aux_rhs = Num[]
-  for eq in aux_eqs
-    g = eq.rhs
-    dg_dt = sum(Symbolics.derivative(g, xj) * xj_dot
-                for (xj, xj_dot) in zip(orig_vars, orig_rhs))
-    push!(aux_rhs, Symbolics.simplify(dg_dt))
-  end
-  return aux_rhs
+  return [_aux_derivative_rhs(eq, orig_vars, orig_rhs) for eq in aux_eqs]
 end
 
 # Utility functions
@@ -199,12 +202,12 @@ end
 Split a sum expression into individual summand terms.
 """
 function _split_sum(expr::Num)
-  ex = Symbolics.unwrap(expr)
+  ex = Symbolics.unwrap(Symbolics.expand(expr))
   if Symbolics.isadd(ex)
-    return Num.(collect(keys(Symbolics.arguments(ex))))
-  else
-    return [expr]
+    parts = SymbolicUtils.arguments(ex)
+    return isempty(parts) ? Num[Num(0)] : Num.(parts)
   end
+  return [expr]
 end
 
 """
