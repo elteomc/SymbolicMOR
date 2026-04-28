@@ -4,7 +4,7 @@ SymbolicMOR.jl is a Julia prototype for **intrusive model order reduction** of n
 
 1. Symbolically lift polynomial dynamics into **quadratic** form (`lift_system`).
 2. Simulate **snapshot** trajectories and build a **POD** basis (`generate_snapshots`, `compute_pod_basis`).
-3. Extract dense quadratic operators **A**, **H**, **c** and **Galerkin-project** them (`extract_operators`, `galerkin_project`, `rom_rhs!`).
+3. Extract dense, sparse, or tensor quadratic operators **A**, **H/Q**, **c** and **Galerkin-project** them (`extract_operators`, `extract_quadratic_tensor`, `galerkin_project`, `rom_rhs!`).
 4. Compare **serial vs parallel** snapshot generation (`generate_snapshots_parallel`, `generate_snapshots_ensemble`, `benchmark_serial_vs_parallel`, aliased as `benchmark_scaling`).
 
 It was developed as coursework for MIT **18.337 / 6.7320**, Parallel Computing and Scientific Machine Learning.
@@ -49,6 +49,7 @@ Run from the repo root with `julia --project=. ...`. Suggested order:
 | `benchmarks/vanderpol_benchmark.jl` | Mixed cubic term (`x^2*y`-type structure after expansion). |
 | `benchmarks/lorenz_benchmark.jl` | Familiar quadratic chaos benchmark; POD + ROM projection spot-check + serial/parallel timing. |
 | `benchmarks/allen_cahn_benchmark.jl` | Conservative Allen-Cahn reaction smoke benchmark (`du/dt = -u^3`) plus a documented affine reaction limitation. |
+| `benchmarks/quadratic_operator_benchmark.jl` | Dense `H * kron(x, x)` vs tensor-backed quadratic evaluation. |
 
 Parallel scaling smoke test (needs workers, e.g. `-p 4`):
 
@@ -59,7 +60,7 @@ julia --project=. -p 4 scripts/scaling_benchmark.jl
 ## Limitations
 
 - Intended for **polynomial right-hand sides**; broader polynomialization of non-polynomial dynamics remains experimental (`polynomialize.jl`).
-- Quadratic tensors use dense **`H * kron(u, u)`**: fine for demos, poor scaling for large lifted dimensions.
+- Dense quadratic tensors use **`H * kron(u, u)`** for compatibility; prefer `QuadraticTensor` for larger sparse quadratic systems.
 - Parallel snapshots use Julia **Distributed**; overhead dominates small ensembles or Windows setups. Linux/cluster runs are cleaner for scaling plots.
 - Full SciML ecosystem alignment (e.g. **ModelingToolkit `ODESystem`** entry points, **EnsembleProblem** orchestration) is not implemented here yet.
 

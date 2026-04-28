@@ -6,6 +6,7 @@ include("lift/quadratize.jl")
 
 # -- Phase 2: Learn --
 include("learn/snapshot.jl")
+include("learn/quadratic_operator.jl")
 include("learn/pod_galerkin.jl")
 
 # -- Phase 3: Scale --
@@ -20,8 +21,16 @@ export
   lift_system,
   # Phase 2
   generate_snapshots,
+  QuadraticTensor,
+  evaluate_quadratic!,
+  dense_matrix,
+  sparse_matrix,
+  quadratic_rhs!,
   compute_pod_basis,
   galerkin_project,
+  extract_operators_dense,
+  extract_operators_sparse,
+  extract_quadratic_tensor,
   extract_operators,
   rom_rhs!,
   # Phase 3
