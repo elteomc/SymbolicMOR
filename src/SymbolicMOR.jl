@@ -10,6 +10,7 @@ include("learn/pod_galerkin.jl")
 
 # -- Phase 3: Scale --
 include("scale/parallel_snapshot.jl")
+include("scale/ensemble_snapshot.jl")
 include("scale/benchmarks.jl")
 
 export
@@ -25,6 +26,7 @@ export
   rom_rhs!,
   # Phase 3
   generate_snapshots_parallel,
+  generate_snapshots_ensemble,
   benchmark_scaling,
   benchmark_serial_vs_parallel
 end

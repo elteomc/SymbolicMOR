@@ -5,4 +5,5 @@ using SymbolicMOR
     include("test_quadratize.jl")
     include("test_pod.jl")
     include("test_lorenz.jl")
+    include("test_ensemble_snapshot.jl")
 end

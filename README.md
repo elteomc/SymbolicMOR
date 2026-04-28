@@ -5,9 +5,11 @@ SymbolicMOR.jl is a Julia prototype for **intrusive model order reduction** of n
 1. Symbolically lift polynomial dynamics into **quadratic** form (`lift_system`).
 2. Simulate **snapshot** trajectories and build a **POD** basis (`generate_snapshots`, `compute_pod_basis`).
 3. Extract dense quadratic operators **A**, **H**, **c** and **Galerkin-project** them (`extract_operators`, `galerkin_project`, `rom_rhs!`).
-4. Compare **serial vs parallel** snapshot generation (`generate_snapshots_parallel`, `benchmark_serial_vs_parallel`, aliased as `benchmark_scaling`).
+4. Compare **serial vs parallel** snapshot generation (`generate_snapshots_parallel`, `generate_snapshots_ensemble`, `benchmark_serial_vs_parallel`, aliased as `benchmark_scaling`).
 
 It was developed as coursework for MIT **18.337 / 6.7320**, Parallel Computing and Scientific Machine Learning.
+
+License: MIT. See `LICENSE`.
 
 ## Status
 
@@ -68,6 +70,17 @@ julia --project=. -p 4 scripts/scaling_benchmark.jl
 - `benchmarks/` : benchmark scripts (see table above)
 - `test/` : tests
 - `Project.toml`
+
+## Documentation
+
+Build the local Documenter.jl site with:
+
+```bash
+julia --project=docs -e "using Pkg; Pkg.instantiate()"
+julia --project=docs docs/make.jl
+```
+
+The generated site is written to `docs/build/`.
 
 ## References
 
