@@ -17,7 +17,7 @@ using LinearAlgebra
 using Plots
 
 println("="^60)
-println("  LiftAndLearnMOR - Lorenz System Demo")
+println("  SymbolicMOR - Lorenz System Demo")
 println("="^60)
 
 # --- Parameters ---
