@@ -1,46 +1,61 @@
 # src/scale/benchmarks.jl
 #
-# Phase 3 - Speedup Benchmarking Utilities
+# Phase 3 - Speedup Benchmarking
+#
+# Run this script as:
+#   julia --project=. -p 4 scripts/scaling_benchmark.jl
+#
+# The -p N flag launches Julia with N worker processes.
+# Compare results across different values of N to get the speedup curve.
 
 using Distributed
 using BenchmarkTools
 
 """
-    benchmark_scaling(f!, u0_ensemble, tspan; core_counts, dt)
+    benchmark_serial_vs_parallel(f!, u0_ensemble, tspan; dt, n_samples)
 
-Measure wall-clock time for snapshot generation at each core count in
-core_counts and return a NamedTuple for plotting.
+Benchmark serial vs parallel snapshot generation using however many
+workers are currently available (set via -p N at Julia startup).
 
-# Example
-    results = benchmark_scaling(lorenz!, u0s, (0.0, 5.0); core_counts=[1,2,4,8])
-    # results.cores   -> [1, 2, 4, 8]
-    # results.times   -> elapsed seconds at each core count
-    # results.speedup -> speedup relative to single core
+Returns a NamedTuple with timing and speedup.
 """
-function benchmark_scaling(f!, u0_ensemble, tspan;
-                           core_counts::Vector{Int}=[1,2,4,8],
-                           dt::Float64=0.01)
-    times    = Float64[]
-    speedups = Float64[]
+function benchmark_serial_vs_parallel(
+    f!,
+    u0_ensemble::Vector{<:AbstractVector},
+    tspan::Tuple{<:Real,<:Real};
+    dt::Float64 = 0.01,
+    n_samples::Int = 3
+)
+    n_workers = nworkers()
 
-    t_serial = nothing
+    # serial baseline - always single process
+    t_serial = minimum(
+        @elapsed generate_snapshots(f!, u0_ensemble, tspan; dt)
+        for _ in 1:n_samples
+    )
 
-    for ncores in core_counts
-        t = @elapsed begin
-            if ncores == 1
-                generate_snapshots(f!, u0_ensemble, tspan; dt)
-            else
-                generate_snapshots_parallel(f!, u0_ensemble, tspan; dt)
-            end
-        end
-
-        isnothing(t_serial) && (t_serial = t)
-
-        push!(times, t)
-        push!(speedups, t_serial / t)
-
-        @info "Cores: $ncores | Time: $(round(t, digits=3)) s | Speedup: $(round(t_serial / t, digits=2)) x"
+    # parallel - uses all available workers
+    t_parallel = if n_workers == 1
+        @warn "No extra workers available. Launch Julia with -p N for parallel benchmark."
+        t_serial
+    else
+        minimum(
+            @elapsed generate_snapshots_parallel(f!, u0_ensemble, tspan; dt)
+            for _ in 1:n_samples
+        )
     end
 
-    return (cores=core_counts, times=times, speedup=speedups)
+    speedup = t_serial / t_parallel
+
+    @info "Workers: $n_workers"
+    @info "Serial:   $(round(t_serial,   digits=3)) s"
+    @info "Parallel: $(round(t_parallel, digits=3)) s"
+    @info "Speedup:  $(round(speedup,    digits=2)) x"
+
+    return (
+        n_workers  = n_workers,
+        t_serial   = t_serial,
+        t_parallel = t_parallel,
+        speedup    = speedup
+    )
 end

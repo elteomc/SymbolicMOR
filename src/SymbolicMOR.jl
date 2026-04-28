@@ -25,6 +25,6 @@ export
   rom_rhs!,
   # Phase 3
   generate_snapshots_parallel,
-  benchmark_scaling
-
+  benchmark_scaling,
+  benchmark_serial_vs_parallel
 end
