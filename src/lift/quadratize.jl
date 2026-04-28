@@ -83,8 +83,9 @@ function lift_system(vars::Vector{Num}, rhs::Vector{Num})
 
   # Append aux var derivatives (also need to be quadratized)
   for drhs in aux_rhs
+    drhs_subst = _substitute_aux(drhs, aux_eqs)
     q, lifted_vars, aux_eqs =
-      _quadratize_expr(drhs, lifted_vars, aux_eqs, aux_counter)
+      _quadratize_expr(drhs_subst, lifted_vars, aux_eqs, aux_counter)
     push!(lifted_rhs, q)
   end
 
@@ -167,6 +168,14 @@ function _differentiate_aux_vars(aux_eqs::Vector{Equation}, orig_vars::Vector{Nu
 end
 
 # Utility functions
+
+function _substitute_aux(expr::Num, aux_eqs::Vector{Equation})
+  for eq in aux_eqs
+    expr = Symbolics.substitute(expr, Dict(eq.rhs => eq.lhs))
+  end
+
+  return Symbolics.simplify(expr)
+end
 
 """
 Total polynomial degree of expr in vars. Returns a large value if not polynomial.

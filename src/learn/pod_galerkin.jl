@@ -92,3 +92,48 @@ function rom_rhs!(da, a, params, t)
     A_hat, H_hat, c_hat = params
     da .= A_hat * a .+ H_hat * kron(a, a) .+ c_hat
 end
+
+"""
+    extract_operators(ls::LiftedSystem)
+
+Extract the numerical matrices A, H, c from a LiftedSystem such that:
+    F(s) = A*s + H*(kron(s,s)) + c
+
+Uses symbolic differentiation:
+  - c[i]           = F[i] evaluated at s=0
+  - A[i,j]         = dF[i]/ds[j] at s=0
+  - H[i,(p-1)*n+q] = (1/2) * d2F[i]/(ds[p]*ds[q]) at s=0
+
+The factor of 1/2 comes from symmetry: the second mixed partial
+of s[p]*s[q] equals 2 on the diagonal (p==q) and 2 off-diagonal
+when H is symmetric, so dividing by 2 recovers the true coefficient.
+
+# Returns
+(A, H, c) as Float64 matrices/vector, ready for galerkin_project.
+"""
+function extract_operators(ls::LiftedSystem)
+    n    = length(ls.lifted_vars)
+    s    = ls.lifted_vars
+    F    = ls.F
+    sub0 = Dict(v => 0.0 for v in s)
+
+    _eval(expr) = Float64(Symbolics.value(Symbolics.substitute(expr, sub0)))
+
+    # constant term
+    c = [_eval(F[i]) for i in 1:n]
+
+    # linear term
+    A = zeros(n, n)
+    for i in 1:n, j in 1:n
+        A[i,j] = _eval(Symbolics.derivative(F[i], s[j]))
+    end
+
+    # quadratic term - symmetric H
+    H = zeros(n, n*n)
+    for i in 1:n, p in 1:n, q in 1:n
+        d2 = Symbolics.derivative(Symbolics.derivative(F[i], s[p]), s[q])
+        H[i, (p-1)*n+q] = _eval(d2) / 2
+    end
+
+    return A, H, c
+end
