@@ -2,7 +2,7 @@
 
 SymbolicMOR.jl is a Julia prototype for **intrusive model order reduction** of nonlinear polynomial ODEs using a compact lift-and-learn workflow:
 
-1. Symbolically lift polynomial dynamics into **quadratic** form (`lift_system`).
+1. Symbolically lift polynomial dynamics into **quadratic** form (`lift_system`), either from vectors of symbolic variables/RHS expressions or from a narrow explicit ModelingToolkit `ODESystem`.
 2. Simulate **snapshot** trajectories and build a **POD** basis (`generate_snapshots`, `compute_pod_basis`).
 3. Extract dense, sparse, or tensor quadratic operators **A**, **H/Q**, **c** and **Galerkin-project** them (`extract_operators`, `extract_quadratic_tensor`, `galerkin_project`, `rom_rhs!`).
 4. Compare **serial vs parallel** snapshot generation (`generate_snapshots_parallel`, `generate_snapshots_ensemble`, `benchmark_serial_vs_parallel`, aliased as `benchmark_scaling`).
@@ -13,7 +13,7 @@ License: MIT. See `LICENSE`.
 
 ## Status
 
-This is a **research prototype**, not a registered General registry package. It is suitable for reproducible demos, benchmarks, and course reports; SciML-grade polish (compat breadth, docs on Documenter.jl, MTK-first APIs, etc.) is left as future work.
+This is a **research prototype**, not a registered General registry package. It is suitable for reproducible demos, benchmarks, and course reports; SciML-grade polish (compat breadth, broader MTK coverage, etc.) is left as future work.
 
 ## Installation
 
@@ -62,6 +62,8 @@ Run from the repo root with `julia --project=. ...`. Suggested order:
 | `benchmarks/allen_cahn_benchmark.jl` | Conservative Allen-Cahn reaction smoke benchmark (`du/dt = -u^3`) plus a documented affine reaction limitation. |
 | `benchmarks/quadratic_operator_benchmark.jl` | Dense `H * kron(x, x)` vs tensor-backed quadratic evaluation. |
 | `benchmarks/galerkin_scaling_benchmark.jl` | Dense vs tensor Galerkin projection and ROM RHS scaling. |
+| `benchmarks/cluster_campaign.jl` | Portable local/HPC benchmark campaign runner with CSV output. |
+| `benchmarks/summarize_campaign.jl` | Summarize campaign CSV files into speedup and efficiency plots. |
 
 Parallel scaling smoke test (needs workers, e.g. `-p 4`):
 
@@ -69,12 +71,19 @@ Parallel scaling smoke test (needs workers, e.g. `-p 4`):
 julia --project=. -p 4 scripts/scaling_benchmark.jl
 ```
 
+Portable benchmark campaign smoke test:
+
+```bash
+julia --project=. -p 2 benchmarks/cluster_campaign.jl --case lorenz --trajectories 16 --tend 1.0 --dt 0.05 --repeats 1 --out benchmark_results/local_p2.csv
+julia --project=. benchmarks/summarize_campaign.jl benchmark_results benchmark_results/local_summary
+```
+
 ## Limitations
 
 - Intended for **polynomial right-hand sides**; broader polynomialization of non-polynomial dynamics remains experimental (`polynomialize.jl`).
 - Dense quadratic tensors use **`H * kron(u, u)`** for compatibility; prefer `QuadraticTensor` for larger sparse quadratic systems and ROM RHS evaluation.
 - Parallel snapshots use Julia **Distributed**; overhead dominates small ensembles or Windows setups. Linux/cluster runs are cleaner for scaling plots.
-- Full SciML ecosystem alignment (e.g. **ModelingToolkit `ODESystem`** entry points, **EnsembleProblem** orchestration) is not implemented here yet.
+- ModelingToolkit support is intentionally narrow: explicit polynomial `ODESystem`s with one `D(x) ~ rhs` equation per state. DAEs, observed-variable elimination, and symbolic parameters without substitution are rejected.
 
 ## Repository layout
 

@@ -7,4 +7,5 @@ using SymbolicMOR
     include("test_quadratic_operator.jl")
     include("test_lorenz.jl")
     include("test_ensemble_snapshot.jl")
+    include("test_mtk_api.jl")
 end

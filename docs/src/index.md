@@ -10,6 +10,10 @@ The package currently focuses on four pieces:
 3. POD basis computation and Galerkin projection for quadratic systems.
 4. Serial, distributed, and SciML ensemble snapshot workflows.
 
+The main lifting entry point accepts either vectors of Symbolics variables and
+right-hand-side expressions, or a narrow explicit ModelingToolkit `ODESystem`
+with one `D(x) ~ rhs` equation per state.
+
 This is research-prototype code. It is useful for course demos and small
 experiments, but it is not yet a registered Julia package.
 

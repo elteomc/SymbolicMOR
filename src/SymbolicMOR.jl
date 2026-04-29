@@ -3,6 +3,7 @@ module SymbolicMOR
 # -- Phase 1: Lift --
 include("lift/polynomialize.jl")
 include("lift/quadratize.jl")
+include("lift/mtk_api.jl")
 
 # -- Phase 2: Learn --
 include("learn/snapshot.jl")
@@ -19,6 +20,7 @@ export
   polynomialize,
   quadratize,
   lift_system,
+  extract_state_rhs,
   # Phase 2
   generate_snapshots,
   QuadraticTensor,

@@ -6,6 +6,7 @@
 SymbolicMOR.LiftedSystem
 polynomialize
 lift_system
+extract_state_rhs
 quadratize
 ```
 

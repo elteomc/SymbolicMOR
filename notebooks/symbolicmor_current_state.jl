@@ -9,6 +9,7 @@ begin
     pushfirst!(LOAD_PATH, normpath(@__DIR__, ".."))
     using SymbolicMOR
     using Symbolics
+    using ModelingToolkit
     using OrdinaryDiffEq
     using LinearAlgebra
     using Random
@@ -35,14 +36,14 @@ end
 md"""
 # SymbolicMOR Current State
 
-This notebook is a guided walkthrough of the project as it exists now. It is
-not a slide deck: change the controls, rerun cells, and inspect intermediate
-objects.
+This notebook is a guided technical walkthrough of the project as it exists
+now. Change the controls, rerun cells, and inspect
+intermediate objects.
 
 The pipeline is:
 
 1. define polynomial dynamics,
-2. symbolically lift them to quadratic form,
+2. symbolically lift them to quadratic form, including a narrow MTK path,
 3. generate trajectory snapshots,
 4. compute a POD basis,
 5. extract dense, sparse, or tensor quadratic operators,
@@ -87,6 +88,36 @@ begin
     )
 end
 
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721024
+md"""
+### ModelingToolkit entry point
+
+The vector API remains the core path, but explicit ModelingToolkit
+`ODESystem`s can now be adapted into the same lifting pipeline.
+"""
+
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721025
+begin
+    @independent_variables t_mtk
+    @variables x_mtk(t_mtk) y_mtk(t_mtk) z_mtk(t_mtk)
+    D_mtk = Differential(t_mtk)
+    lorenz_mtk_rhs = [
+        sigma_val * (y_mtk - x_mtk),
+        x_mtk * (rho_val - z_mtk) - y_mtk,
+        x_mtk * y_mtk - beta_val * z_mtk,
+    ]
+    @named lorenz_sys = ODESystem(D_mtk.([x_mtk, y_mtk, z_mtk]) .~ lorenz_mtk_rhs, t_mtk)
+
+    mtk_states, mtk_rhs = extract_state_rhs(lorenz_sys)
+    mtk_lifted = lift_system(lorenz_sys)
+    mtk_summary = (
+        states = mtk_states,
+        rhs_count = length(mtk_rhs),
+        lifted_states = length(mtk_lifted.lifted_vars),
+        auxiliary_equations = length(mtk_lifted.aux_eqs),
+    )
+end
+
 # ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721007
 md"""
 ## 2. Cubic decay: why lifting matters
@@ -105,6 +136,19 @@ begin
         lifted_states = length(cubic_lifted.lifted_vars),
         auxiliary_equations = length(cubic_lifted.aux_eqs),
         lifted_variables = cubic_lifted.lifted_vars,
+    )
+end
+
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721026
+begin
+    function degree_summary(ls)
+        [maximum(Symbolics.degree(expr, var) for var in ls.lifted_vars; init = 0) for expr in ls.F]
+    end
+
+    aux_inspector = (
+        cubic_aux_definitions = cubic_lifted.aux_eqs,
+        cubic_lifted_rhs = cubic_lifted.F,
+        cubic_rhs_degrees = degree_summary(cubic_lifted),
     )
 end
 
@@ -183,6 +227,19 @@ begin
         sparse_matches_dense = Matrix(H_sparse) == H_dense,
         tensor_matches_dense = dense_matrix(Q_tensor) == H_dense,
     )
+end
+
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721027
+begin
+    tensor_coordinate_preview = [
+        (
+            row = Q_tensor.rows[i],
+            col1 = Q_tensor.cols1[i],
+            col2 = Q_tensor.cols2[i],
+            value = Q_tensor.vals[i],
+        )
+        for i in 1:min(length(Q_tensor), 8)
+    ]
 end
 
 # ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721016
@@ -269,14 +326,64 @@ begin
     )
 end
 
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721028
+begin
+    dense_projection_time = @elapsed galerkin_project(A_dense, H_dense, c_dense, Phi)
+    tensor_projection_time = @elapsed galerkin_project(A_tensor, Q_tensor, c_tensor, Phi)
+    projection_timing_summary = (
+        dense_projection_seconds = dense_projection_time,
+        tensor_projection_seconds = tensor_projection_time,
+    )
+end
+
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721029
+md"""
+## 7. Campaign result import
+
+If `benchmark_results` contains CSV files from `benchmarks/cluster_campaign.jl`,
+this cell summarizes them. It is fine if no result files exist yet.
+"""
+
+# ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721030
+begin
+    function read_campaign_rows(dir)
+        isdir(dir) || return NamedTuple[]
+        files = filter(path -> endswith(path, ".csv"), readdir(dir; join = true))
+        rows = NamedTuple[]
+
+        for file in files
+            lines = readlines(file)
+            length(lines) < 2 && continue
+            headers = split(lines[1], ",")
+            for line in lines[2:end]
+                isempty(strip(line)) && continue
+                values = split(line, ",")
+                data = Dict(headers[i] => values[i] for i in eachindex(headers))
+                push!(rows, (
+                    case = data["case"],
+                    workers = parse(Int, data["workers"]),
+                    speedup = parse(Float64, data["speedup"]),
+                    efficiency = parse(Float64, data["efficiency"]),
+                ))
+            end
+        end
+
+        return rows
+    end
+
+    campaign_rows = read_campaign_rows(normpath(@__DIR__, "..", "benchmark_results"))
+    campaign_summary = isempty(campaign_rows) ? "No campaign CSV files found yet." : campaign_rows
+end
+
 # ╔═╡ 1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721021
 md"""
-## 7. Current limitations
+## 8. Current limitations
 
 * The package is still a research prototype, not a registered Julia package.
 * Polynomial dynamics are the supported path; broader polynomialization remains
   experimental.
-* Full ModelingToolkit `ODESystem` integration is still future work.
+* ModelingToolkit support is currently limited to explicit polynomial
+  `ODESystem`s with one `D(x) ~ rhs` equation per state.
 * Parallel snapshot speedups need large ensembles or cluster/Linux runs to be
   convincing.
 * This notebook is intentionally small so it can run live with a colleague.
@@ -287,12 +394,16 @@ md"""
 ## Discussion checklist
 
 * Show `lorenz_summary` and explain why Lorenz is a clean baseline.
+* Show `mtk_summary` to demonstrate the ModelingToolkit adapter.
 * Show `cubic_summary` and explain what lifting buys you.
+* Show `aux_inspector` to inspect auxiliary variables and lifted RHS degrees.
 * Move the snapshot/POD controls and watch `snapshot_summary` change.
 * Compare `operator_summary` across dense, sparse, and tensor forms.
+* Inspect `tensor_coordinate_preview` for the sparse coordinate layout.
 * Use `rom_summary` as a smoke check, not as a claim of long-time chaos
   prediction.
-* End with `scaling_summary` and the limitation list.
+* End with `scaling_summary`, `projection_timing_summary`, campaign results,
+  and the limitation list.
 """
 
 # ╔═╡ Cell order:
@@ -303,8 +414,11 @@ md"""
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721004
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721005
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721006
+# ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721024
+# ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721025
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721007
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721008
+# ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721026
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721009
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721010
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721011
@@ -312,10 +426,14 @@ md"""
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721013
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721014
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721015
+# ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721027
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721016
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721017
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721018
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721019
 # ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721020
+# ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721028
+# ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721029
+# ╠═1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721030
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721021
 # ╟─1f4b7c3e-8f6a-11ee-1a1a-3b1d4d721022
