@@ -39,6 +39,17 @@ julia --project=. scripts/lorenz_demo.jl
 
 This walks through symbolic lifting for Lorenz (already quadratic, zero auxiliary variables), snapshots, POD, and saves an SVD decay plot (`lorenz_svd.png`). For chaotic dynamics, interpret errors over **short horizons** or statistically; pointwise long-time trajectory matching is not the right metric.
 
+## Interactive Pluto demo
+
+For a walkthrough of the full project state, launch Pluto with the notebook environment:
+
+```bash
+julia --project=notebooks -e "using Pkg; Pkg.instantiate()"
+julia --project=notebooks -e "using Pluto; Pluto.run()"
+```
+
+Then open `notebooks/symbolicmor_current_state.jl`. The notebook covers lifting, snapshots, POD, operator extraction, ROM comparison, scaling helpers, and current limitations.
+
 ## Benchmark scripts (`benchmarks/`)
 
 Run from the repo root with `julia --project=. ...`. Suggested order:
@@ -50,6 +61,7 @@ Run from the repo root with `julia --project=. ...`. Suggested order:
 | `benchmarks/lorenz_benchmark.jl` | Familiar quadratic chaos benchmark; POD + ROM projection spot-check + serial/parallel timing. |
 | `benchmarks/allen_cahn_benchmark.jl` | Conservative Allen-Cahn reaction smoke benchmark (`du/dt = -u^3`) plus a documented affine reaction limitation. |
 | `benchmarks/quadratic_operator_benchmark.jl` | Dense `H * kron(x, x)` vs tensor-backed quadratic evaluation. |
+| `benchmarks/galerkin_scaling_benchmark.jl` | Dense vs tensor Galerkin projection and ROM RHS scaling. |
 
 Parallel scaling smoke test (needs workers, e.g. `-p 4`):
 
@@ -60,7 +72,7 @@ julia --project=. -p 4 scripts/scaling_benchmark.jl
 ## Limitations
 
 - Intended for **polynomial right-hand sides**; broader polynomialization of non-polynomial dynamics remains experimental (`polynomialize.jl`).
-- Dense quadratic tensors use **`H * kron(u, u)`** for compatibility; prefer `QuadraticTensor` for larger sparse quadratic systems.
+- Dense quadratic tensors use **`H * kron(u, u)`** for compatibility; prefer `QuadraticTensor` for larger sparse quadratic systems and ROM RHS evaluation.
 - Parallel snapshots use Julia **Distributed**; overhead dominates small ensembles or Windows setups. Linux/cluster runs are cleaner for scaling plots.
 - Full SciML ecosystem alignment (e.g. **ModelingToolkit `ODESystem`** entry points, **EnsembleProblem** orchestration) is not implemented here yet.
 

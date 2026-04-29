@@ -94,10 +94,8 @@ function galerkin_project(A::AbstractMatrix, Q::QuadraticTensor,
     A_hat = Phi' * A * Phi
     c_hat = Phi' * c
 
-    rows = Int[]
-    cols1 = Int[]
-    cols2 = Int[]
-    vals = Float64[]
+    T = promote_type(eltype(Phi), eltype(Q.vals), eltype(A), eltype(c))
+    reduced = zeros(T, r, r, r)
 
     for k in eachindex(Q.vals)
         i = Q.rows[k]
@@ -105,19 +103,58 @@ function galerkin_project(A::AbstractMatrix, Q::QuadraticTensor,
         q = Q.cols2[k]
         val = Q.vals[k]
 
-        for alpha in 1:r, beta in 1:r, gamma in 1:r
-            coeff = Phi[i, alpha] * val * Phi[p, beta] * Phi[q, gamma]
-            iszero(coeff) && continue
+        for alpha in 1:r
+            row_coeff = Phi[i, alpha] * val
+            iszero(row_coeff) && continue
 
-            push!(rows, alpha)
-            push!(cols1, beta)
-            push!(cols2, gamma)
-            push!(vals, coeff)
+            for beta in 1:r, gamma in 1:r
+                coeff = row_coeff * Phi[p, beta] * Phi[q, gamma]
+                iszero(coeff) && continue
+
+                col1 = min(beta, gamma)
+                col2 = max(beta, gamma)
+                reduced[alpha, col1, col2] += coeff
+            end
         end
+    end
+
+    rows = Int[]
+    cols1 = Int[]
+    cols2 = Int[]
+    vals = T[]
+
+    for alpha in 1:r, beta in 1:r, gamma in beta:r
+        coeff = reduced[alpha, beta, gamma]
+        iszero(coeff) && continue
+
+        push!(rows, alpha)
+        push!(cols1, beta)
+        push!(cols2, gamma)
+        push!(vals, coeff)
     end
 
     Q_hat = QuadraticTensor(r, r, rows, cols1, cols2, vals)
     return A_hat, Q_hat, c_hat
+end
+
+function _apply_linear_constant!(out, A, x, c)
+    mul!(out, A, x)
+    out .+= c
+    return out
+end
+
+function _add_dense_quadratic!(out, H, x)
+    n = length(x)
+    for row in axes(H, 1)
+        acc = zero(eltype(out))
+        for col1 in 1:n, col2 in 1:n
+            coeff = H[row, (col1 - 1) * n + col2]
+            iszero(coeff) && continue
+            acc += coeff * x[col1] * x[col2]
+        end
+        out[row] += acc
+    end
+    return out
 end
 
 """
@@ -129,11 +166,11 @@ In-place RHS for the reduced-order model. Pass to `ODEProblem`.
 """
 function rom_rhs!(da, a, params, t)
     A_hat, H_hat, c_hat = params
-    da .= A_hat * a .+ c_hat
+    _apply_linear_constant!(da, A_hat, a, c_hat)
     if H_hat isa QuadraticTensor
         evaluate_quadratic!(da, H_hat, a; reset = false)
     else
-        da .+= H_hat * kron(a, a)
+        _add_dense_quadratic!(da, H_hat, a)
     end
     return nothing
 end
