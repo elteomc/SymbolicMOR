@@ -5,6 +5,9 @@ Manifest.toml
 *.jl.mem
 /docs/build/
 
+# Editor session exports / local tooling (never commit)
+.specstory/
+
 # Outputs
 *.png
 *.pdf
