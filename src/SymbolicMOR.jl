@@ -17,7 +17,8 @@ include("scale/benchmarks.jl")
 
 export
   # Phase 1
-  polynomialize,
+  polynomialize_system,
+  PolynomializationResult,
   quadratize,
   lift_system,
   extract_state_rhs,

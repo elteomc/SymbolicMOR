@@ -17,7 +17,7 @@
 using Symbolics
 using Symbolics: value, get_variables
 
-const SymbolicUtils = Symbolics.SymbolicUtils
+# `SymbolicUtils` is aliased in lift/polynomialize.jl, which is included first.
 
 # Public API
 
@@ -69,23 +69,36 @@ function lift_system(vars::Vector{Num}, rhs::Vector{Num})
   length(vars) == length(rhs) ||
     throw(ArgumentError("vars and rhs must have the same length"))
 
-  lifted_vars = copy(vars)
-  aux_eqs = Equation[]
-  lifted_rhs = copy(rhs)
+  # Step 1: polynomialize the RHS. After this step, `poly_rhs` is polynomial
+  # in `poly_vars` (= original vars + polynomialization auxiliaries p1, p2, ...).
+  poly = polynomialize_system(vars, rhs)
+  poly_vars = poly.polynomial_vars
+  poly_rhs  = poly.polynomial_rhs
+
+  # Step 2: quadratize each polynomial RHS entry. Polynomialization aux RHS
+  # entries (p1_dot, p2_dot, ...) are already in `poly_rhs`, so they are
+  # quadratized here too.
+  lifted_vars = copy(poly_vars)
+  aux_eqs = copy(poly.aux_defs)
+  lifted_rhs = copy(poly_rhs)
   aux_counter = Ref(0)
 
-  # Iteratively quadratize each component of the RHS
   for i in eachindex(lifted_rhs)
     lifted_rhs[i], lifted_vars, aux_eqs =
       _quadratize_expr(lifted_rhs[i], lifted_vars, aux_eqs, aux_counter)
   end
 
-  # Aux RHS via chain rule. Quadratizing those derivatives can append new equations to `aux_eqs`;
-  # continue until every current auxiliary definition has a corresponding RHS row (queue walk).
-  orig_rhs_segment = lifted_rhs[1:length(vars)]
-  aux_idx = 1
+  # Step 3: chain-rule for quadratization auxiliaries only. The polynomialization
+  # auxiliaries already have RHS entries from Step 2. Differentiate quadratization
+  # aux against the polynomial state `poly_vars`, multiplying by the *quadratized*
+  # RHS (`lifted_rhs[1:length(poly_vars)]`). Using the quadratized RHS keeps
+  # intermediate derivative expressions low-degree and prevents combinatorial
+  # blow-up from re-quadratizing high-degree monomials produced by the chain rule.
+  n_poly_aux = length(poly.aux_defs)
+  aux_idx = n_poly_aux + 1
   while aux_idx <= length(aux_eqs)
-    drhs = _aux_derivative_rhs(aux_eqs[aux_idx], vars, orig_rhs_segment)
+    poly_rhs_segment = lifted_rhs[1:length(poly_vars)]
+    drhs = _aux_derivative_rhs(aux_eqs[aux_idx], poly_vars, poly_rhs_segment)
     drhs_subst = _substitute_aux(drhs, aux_eqs)
     q, lifted_vars, aux_eqs =
       _quadratize_expr(drhs_subst, lifted_vars, aux_eqs, aux_counter)
