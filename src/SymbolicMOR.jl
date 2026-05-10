@@ -36,6 +36,8 @@ export
   extract_quadratic_tensor,
   extract_operators,
   rom_rhs!,
+  build_lifted_rhs,
+  build_simple_rom_rhs,
   # Phase 3
   generate_snapshots_parallel,
   generate_snapshots_ensemble,

@@ -137,6 +137,60 @@ function galerkin_project(A::AbstractMatrix, Q::QuadraticTensor,
     return A_hat, Q_hat, c_hat
 end
 
+"""
+    build_lifted_rhs(ls::LiftedSystem)
+
+Compile the lifted vector field `G(s) = ls.F(s)` into a callable
+`(du, u, p, t) -> nothing` suitable for `ODEProblem`. Useful as the
+full-order RHS, and as a building block for the simple Galerkin ROM
+which evaluates G inside the reduced-state ODE.
+"""
+function build_lifted_rhs(ls::LiftedSystem)
+    oop, _ = Symbolics.build_function(ls.F, ls.lifted_vars; expression=Val{false})
+    return (du, u, p, t) -> (du .= oop(u); nothing)
+end
+
+"""
+    build_simple_rom_rhs(ls::LiftedSystem, V::AbstractMatrix; z_mean=zeros(size(V,1)))
+
+Build a closure for the *simple* (function-evaluating) Galerkin ROM:
+
+```math
+\\dot{a} = V^\\top \\, G(\\bar{z} + V a)
+```
+
+where `G` is the full lifted vector field and `V` is the POD basis (`N \\times r`),
+`z_mean` is the optional mean offset. Returns a callable
+`(da, a, p, t) -> nothing` suitable for `ODEProblem`. Internal buffers are
+preallocated, so each call is allocation-free.
+
+This is the pedagogically simplest form of intrusive MOR. For an
+allocation-free *explicit-operator* ROM that avoids evaluating G during
+reduced simulation, use `extract_operators` + `galerkin_project` + `rom_rhs!`.
+"""
+function build_simple_rom_rhs(ls::LiftedSystem, V::AbstractMatrix;
+                              z_mean::AbstractVector = zeros(size(V, 1)))
+    size(V, 1) == length(z_mean) ||
+        throw(DimensionMismatch("V has $(size(V, 1)) rows but z_mean has $(length(z_mean)) entries"))
+    size(V, 1) == length(ls.lifted_vars) ||
+        throw(DimensionMismatch("V has $(size(V, 1)) rows but ls has $(length(ls.lifted_vars)) lifted vars"))
+
+    G! = build_lifted_rhs(ls)
+    N = size(V, 1)
+    s_buf  = zeros(N)
+    Gs_buf = zeros(N)
+    z_local = collect(Float64, z_mean)
+    Vt = transpose(V)
+
+    return function (da, a, p, t)
+        mul!(s_buf, V, a)
+        s_buf .+= z_local
+        G!(Gs_buf, s_buf, p, t)
+        mul!(da, Vt, Gs_buf)
+        return nothing
+    end
+end
+
 function _apply_linear_constant!(out, A, x, c)
     mul!(out, A, x)
     out .+= c
