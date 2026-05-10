@@ -379,27 +379,28 @@ prob = ODEProblem(rom_rhs!, V'*u0s[1], (0.0, 5.0),
 \end{frame}
 
 \begin{frame}{Tensor vs Dense Quadratic Evaluation}
-  Dense $\widehat{H}\, (a \otimes a)$ vs \texttt{QuadraticTensor} contraction, on Allen--Cahn-like sparsity:
+  Evaluate $H \, (z \otimes z)$ at lifted dimension $n$, with random sparsity $\mathrm{nnz}(H) = 4n$ (a regime typical of discretized PDEs after lifting).
 
   \medskip
   \begin{center}
     \footnotesize
     \begin{tabular}{rcccc}
       \toprule
-      $r$ & dense (ms) & tensor (ms) & speedup & memory ratio \\
+      $n$ & dense $H \cdot \mathrm{kron}$ (ms) & \texttt{QuadraticTensor} (ms) & speedup & memory ratio \\
       \midrule
-      4   & X.X & X.X & X.Xx & X.Xx \\
-      8   & X.X & X.X & X.Xx & X.Xx \\
-      16  & X.X & X.X & X.Xx & X.Xx \\
+      40   & 0.004  & < 0.001 & 20x   & 100x   \\
+      80   & 0.066  & < 0.001 & 150x  & 400x   \\
+      160  & 0.734  & 0.001   & 780x  & 1600x  \\
+      320  & 7.55   & 0.002   & 4170x & 6400x  \\
       \bottomrule
     \end{tabular}
   \end{center}
 
   \medskip
-  \textcolor{gray}{(Live numbers from \texttt{benchmarks/} populated the day of the talk.)}
+  Dense scales as $O(n^3)$. The tensor evaluation visits only the stored entries, so it stays roughly proportional to $\mathrm{nnz}(H)$ regardless of $n$. The same crossover applies to the \emph{reduced} operator $\widehat{H}$ once $r$ is large enough.
 
   \medskip
-  Crossover behavior: dense wins when $\widehat{H}$ is small enough to fit in cache; tensor wins past that. The ROM application path uses the cheapest of the three.
+  Reproduce: \texttt{julia --project=. benchmarks/quadratic\_operator\_benchmark.jl}
 \end{frame}
 
 % ============================================================
