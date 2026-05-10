@@ -6,6 +6,7 @@
 SymbolicMOR.LiftedSystem
 polynomialize
 lift_system
+extract_state_rhs
 quadratize
 ```
 
@@ -13,8 +14,16 @@ quadratize
 
 ```@docs
 generate_snapshots
+QuadraticTensor
+evaluate_quadratic!
+dense_matrix
+sparse_matrix
+quadratic_rhs!
 compute_pod_basis
 galerkin_project
+extract_operators_dense
+extract_operators_sparse
+extract_quadratic_tensor
 extract_operators
 rom_rhs!
 ```

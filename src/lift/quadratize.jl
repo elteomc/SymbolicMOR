@@ -17,7 +17,7 @@
 using Symbolics
 using Symbolics: value, get_variables
 
-const SymbolicUtils = Symbolics.SymbolicUtils
+# `SymbolicUtils` is aliased in lift/polynomialize.jl, which is included first.
 
 # Public API
 
@@ -69,23 +69,36 @@ function lift_system(vars::Vector{Num}, rhs::Vector{Num})
   length(vars) == length(rhs) ||
     throw(ArgumentError("vars and rhs must have the same length"))
 
-  lifted_vars = copy(vars)
-  aux_eqs = Equation[]
-  lifted_rhs = copy(rhs)
+  # Step 1: polynomialize the RHS. After this step, `poly_rhs` is polynomial
+  # in `poly_vars` (= original vars + polynomialization auxiliaries p1, p2, ...).
+  poly = polynomialize_system(vars, rhs)
+  poly_vars = poly.polynomial_vars
+  poly_rhs  = poly.polynomial_rhs
+
+  # Step 2: quadratize each polynomial RHS entry. Polynomialization aux RHS
+  # entries (p1_dot, p2_dot, ...) are already in `poly_rhs`, so they are
+  # quadratized here too.
+  lifted_vars = copy(poly_vars)
+  aux_eqs = copy(poly.aux_defs)
+  lifted_rhs = copy(poly_rhs)
   aux_counter = Ref(0)
 
-  # Iteratively quadratize each component of the RHS
   for i in eachindex(lifted_rhs)
     lifted_rhs[i], lifted_vars, aux_eqs =
       _quadratize_expr(lifted_rhs[i], lifted_vars, aux_eqs, aux_counter)
   end
 
-  # Aux RHS via chain rule. Quadratizing those derivatives can append new equations to `aux_eqs`;
-  # continue until every current auxiliary definition has a corresponding RHS row (queue walk).
-  orig_rhs_segment = lifted_rhs[1:length(vars)]
-  aux_idx = 1
+  # Step 3: chain-rule for quadratization auxiliaries only. The polynomialization
+  # auxiliaries already have RHS entries from Step 2. Differentiate quadratization
+  # aux against the polynomial state `poly_vars`, multiplying by the *quadratized*
+  # RHS (`lifted_rhs[1:length(poly_vars)]`). Using the quadratized RHS keeps
+  # intermediate derivative expressions low-degree and prevents combinatorial
+  # blow-up from re-quadratizing high-degree monomials produced by the chain rule.
+  n_poly_aux = length(poly.aux_defs)
+  aux_idx = n_poly_aux + 1
   while aux_idx <= length(aux_eqs)
-    drhs = _aux_derivative_rhs(aux_eqs[aux_idx], vars, orig_rhs_segment)
+    poly_rhs_segment = lifted_rhs[1:length(poly_vars)]
+    drhs = _aux_derivative_rhs(aux_eqs[aux_idx], poly_vars, poly_rhs_segment)
     drhs_subst = _substitute_aux(drhs, aux_eqs)
     q, lifted_vars, aux_eqs =
       _quadratize_expr(drhs_subst, lifted_vars, aux_eqs, aux_counter)
@@ -144,15 +157,34 @@ function _quadratize_monomial(mono::Num, vars::Vector{Num}, aux_eqs::Vector{Equa
 
   while length(factors) > 2
     f1, f2 = factors[1], factors[2]
-    counter[] += 1
-    w_sym = only(@variables $(Symbol("w$(counter[])")))
-    push!(aux_eqs, w_sym ~ f1 * f2)
-    push!(vars, w_sym)
+    candidate = Symbolics.expand(f1 * f2)
+    existing = _find_existing_aux_def(aux_eqs, candidate)
+    if existing !== nothing
+      w_sym = existing
+    else
+      counter[] += 1
+      w_sym = only(@variables $(Symbol("w$(counter[])")))
+      push!(aux_eqs, w_sym ~ candidate)
+      push!(vars, w_sym)
+    end
     factors = [w_sym; factors[3:end]]
   end
 
   result = coeff * prod(factors)
   return result, vars, aux_eqs
+end
+
+# Look up an existing aux whose RHS equals `candidate` after expansion.
+# Returns the aux LHS (the w-variable) if a match exists, else `nothing`.
+# Without this, identical products like `p1*p1` produced repeatedly by the
+# chain-rule loop would each get a fresh aux, never closing.
+function _find_existing_aux_def(aux_eqs::Vector{Equation}, candidate::Num)
+  for eq in aux_eqs
+    if isequal(Symbolics.expand(eq.rhs), candidate)
+      return eq.lhs
+    end
+  end
+  return nothing
 end
 
 """
@@ -173,8 +205,15 @@ end
 # Utility functions
 
 function _substitute_aux(expr::Num, aux_eqs::Vector{Equation})
+  # Symbolics.substitute matches subtrees structurally; without expanding,
+  # `p1*p1` and `p1^2` are different tree shapes and the substitution silently
+  # misses, which causes _quadratize_expr to keep manufacturing duplicate aux
+  # variables for the same product. Expand both sides into canonical form so
+  # the match fires reliably.
+  expr = Symbolics.expand(expr)
   for eq in aux_eqs
-    expr = Symbolics.substitute(expr, Dict(eq.rhs => eq.lhs))
+    key = Symbolics.expand(eq.rhs)
+    expr = Symbolics.expand(Symbolics.substitute(expr, Dict(key => eq.lhs)))
   end
 
   return Symbolics.simplify(expr)

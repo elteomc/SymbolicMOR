@@ -5,10 +5,28 @@ Manifest.toml
 *.jl.mem
 /docs/build/
 
+# Editor session exports / local tooling (never commit)
+.specstory/
+.claude/
+.devloop.jl
+.symor_repl/
+
 # Outputs
 *.png
 *.pdf
 *.csv
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.nav
+*.snm
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.vrb
 
 # OS
 .DS_Store

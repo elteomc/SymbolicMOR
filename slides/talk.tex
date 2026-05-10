@@ -1,0 +1,456 @@
+% slides/talk.tex
+%
+% SymbolicMOR final-project talk for 18.337.
+% Three presenters, 16 minutes total: Lift, Learn, Scale.
+
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{seahorse}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\usepackage{amsmath, amssymb, bm}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codegreen}{RGB}{0,110,70}
+\definecolor{codered}{RGB}{150,45,45}
+\definecolor{codeblue}{RGB}{35,80,160}
+
+\lstdefinelanguage{JuliaLite}{
+  morekeywords={using,function,end,struct,return,for,in,if,else,elseif,try,catch,println,where,mutable,abstract,quote,let,do,module,import,export,global,local},
+  sensitive=true,
+  morecomment=[l]{\#},
+  morestring=[b]",
+}
+
+\lstset{
+  language=JuliaLite,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{codeblue}\bfseries,
+  commentstyle=\color{codegreen},
+  stringstyle=\color{codered},
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{black!15},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  breaklines=true
+}
+
+\title[SymbolicMOR]{Symbolic Lift--Learn--Scale: \\ Intrusive Model Order Reduction in Julia}
+\author{Angelo Farfan \and Prince Tufon \and Eric Noriega}
+\institute{18.337 Final Project}
+\date{\today}
+
+\begin{document}
+
+% ============================================================
+% Title
+% ============================================================
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ============================================================
+% Motivation: 1 slide
+% ============================================================
+\begin{frame}{Motivation}
+  Large nonlinear ODEs are expensive to simulate repeatedly: parameter sweeps, control loops, design optimization.
+
+  \medskip
+  \textbf{Model Order Reduction (MOR)} replaces the high-dimensional system with a small one.
+
+  \medskip
+  \textbf{Intrusive} MOR uses the equations themselves, not just data. The reduced model inherits structure (energy, conservation, stability).
+
+  \medskip
+  \textbf{Catch:} closed-form intrusive projection wants the right-hand side to be polynomial of bounded degree. Real models rarely are.
+
+  \medskip
+  \begin{block}{Our project}
+    Automate the algebra. Take any nonlinear ODE, symbolically rewrite it as a quadratic system, then project. All in Julia, with parallel snapshots.
+  \end{block}
+\end{frame}
+
+% ============================================================
+% Pipeline overview
+% ============================================================
+\begin{frame}{Pipeline}
+  \begin{enumerate}
+    \item \textbf{Lift}: rewrite $\dot{x} = f(x)$ as $\dot{z} = G(z)$ with $G$ at most quadratic in $z$.
+    \item \textbf{Learn}: collect snapshots $X = [z(t_1)\;\cdots\;z(t_K)]$, compute a POD basis $V$, project onto it.
+    \item \textbf{Scale}: snapshot ensembles run in parallel; reduced-state evaluation uses sparse quadratic tensors instead of dense $H \cdot \mathrm{kron}(z,z)$.
+  \end{enumerate}
+
+  \vspace{0.4cm}
+  \[
+    f \;\xrightarrow{\text{symbolic}}\; G \;\xrightarrow{\text{integrate}}\; X \;\xrightarrow{\text{SVD}}\; V \;\xrightarrow{\text{Galerkin}}\; \text{ROM}
+  \]
+
+  \vspace{0.4cm}
+  \begin{center}
+    \footnotesize
+    \textcolor{gray}{Three sections in this talk: Lift, Learn, Scale.}
+  \end{center}
+\end{frame}
+
+% ============================================================
+% PHASE 1: LIFT  (~5 min, ~4 slides)
+% ============================================================
+
+\begin{frame}{Phase 1: Lift. Why Polynomial Form?}
+  Galerkin projection of $\dot{z} = G(z)$ onto a basis $V$ is closed-form when $G$ is a polynomial. Specifically, if
+  \[
+    G(z) = A z + H \, (z \otimes z) + c,
+  \]
+  then with $z \approx V a$,
+  \[
+    \dot{a} \;=\; \widehat{A}\, a + \widehat{H}\, (a \otimes a) + \widehat{c},
+    \qquad
+    \widehat{A} = V^{\top} A V, \quad
+    \widehat{H} = V^{\top} H (V \otimes V), \quad
+    \widehat{c} = V^{\top} c.
+  \]
+
+  \medskip
+  No general nonlinearity in $G$ means no need to evaluate $G$ during reduced simulation. The ROM is just three small matrices.
+
+  \medskip
+  \textbf{Plan:} two symbolic rewrites that take a generic $f$ to a quadratic $G$.
+  \begin{enumerate}
+    \item Polynomialization (handle transcendentals, divisions).
+    \item Quadratization (handle higher-degree monomials).
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Polynomialization: Chain-Rule Closure}
+  For each non-polynomial atom in $f$, introduce a fresh state with closed dynamics.
+
+  \medskip
+  \begin{tabular}{ll}
+    \toprule
+    Atom $\phi(g)$ & New state $p$, with $\dot{p}$ \\
+    \midrule
+    $\exp(g)$            & $\dot{p} = p \cdot \dot{g}$ \\
+    $\sin(g),\; \cos(g)$ & $\dot{p}_s = p_c \dot{g},\; \dot{p}_c = -p_s \dot{g}$ \\
+    $1/g$                & $\dot{p} = -p^2 \dot{g}$ \\
+    $\log(g)$            & $\dot{p} = (1/g)\, \dot{g}$ \\
+    $\sqrt{g}$           & $\dot{p} = \dot{g} / (2 p)$ \\
+    $\tanh(g)$           & $\dot{p} = (1 - p^2)\, \dot{g}$ \\
+    \bottomrule
+  \end{tabular}
+
+  \medskip
+  \textbf{Worked example.} $\dot{x} = \sin(x)$.
+  Introduce $p_s = \sin(x),\; p_c = \cos(x)$:
+  \[
+    \dot{x} = p_s, \qquad
+    \dot{p}_s = p_c\, p_s, \qquad
+    \dot{p}_c = -p_s^2.
+  \]
+  All right-hand sides are polynomial in $(x, p_s, p_c)$. The closure is finite.
+\end{frame}
+
+\begin{frame}{Quadratization: Greedy Monomial Splitting}
+  After polynomialization, every monomial of degree $> 2$ is split by introducing a fresh auxiliary equal to the product of two of its factors.
+
+  \medskip
+  \textbf{Worked example.} $\dot{x} = x^2 y^2$.
+
+  \medskip
+  Factor list: $[x, x, y, y]$. Greedy reduce:
+  \begin{align*}
+    [x, x, y, y] \;&\xrightarrow{\;w_1 = x \cdot x\;}\; [w_1, y, y] \\
+    [w_1, y, y]  \;&\xrightarrow{\;w_2 = w_1 \cdot y\;}\; [w_2, y]
+  \end{align*}
+  Lifted RHS: $\dot{x} = w_2 \cdot y$.
+
+  \medskip
+  Aux dynamics by chain rule, against the post-quadratization state:
+  \[
+    \dot{w}_1 = 2 x \cdot \dot{x}, \qquad
+    \dot{w}_2 = \dot{w}_1 \cdot y + w_1 \cdot \dot{y}.
+  \]
+
+  \medskip
+  \textbf{Two correctness traps we hit:}
+  \begin{itemize}\setlength\itemsep{0pt}
+    \item Use the \emph{quadratized} RHS as the chain-rule basis, not the original. Otherwise high-degree monomials reappear.
+    \item Reuse existing aux when the same product is requested twice. Otherwise the loop never closes.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{The \texttt{lift\_system} API}
+  Takes Symbolics expressions, returns a \texttt{LiftedSystem} with original vars, lifted vars, polynomial RHS $G$, and aux definitions.
+
+\begin{lstlisting}
+using Symbolics, SymbolicMOR
+@variables x
+
+ls = lift_system([x], [tanh(x)])
+# ls.original_vars : [x]
+# ls.lifted_vars   : [x, p1, w1]
+# ls.aux_eqs       : [p1 ~ tanh(x), w1 ~ p1^2]
+# ls.F             : [p1, p1 - p1*w1, 2*w1 - 2*w1^2]
+\end{lstlisting}
+
+  \medskip
+  Verified end to end against the original ODE for
+  $\exp,\;\sin,\;\cos,\;1/g,\;\log,\;\sqrt{\;\;},\;\tanh$. Lifted trajectories match unlifted ones to $\sim 10^{-10}$.
+
+  \medskip
+  Also accepts a ModelingToolkit \texttt{ODESystem} via \texttt{lift\_system(sys)}.
+\end{frame}
+
+% ============================================================
+% PHASE 2: LEARN  (~5 min, ~5 slides)
+% ============================================================
+
+\begin{frame}{Phase 2: Learn. POD Basis from Snapshots}
+  Collect $K$ trajectory snapshots of the lifted system into a matrix
+  \[
+    X = \begin{bmatrix} z(t_1) & z(t_2) & \cdots & z(t_K) \end{bmatrix} \in \mathbb{R}^{N \times K}.
+  \]
+
+  \medskip
+  Take the SVD $X = U \Sigma W^{\top}$. Keep the top $r$ left singular vectors:
+  \[
+    V = U[:, 1{:}r] \in \mathbb{R}^{N \times r}.
+  \]
+
+  \medskip
+  $V$ is the optimal rank-$r$ orthonormal basis for the snapshot data in the $L^2$ sense. The reduced state is $a \in \mathbb{R}^r$, with
+  \[
+    z \;\approx\; V a.
+  \]
+
+  \medskip
+  Energy retention: choose $r$ so that $\sum_{i \leq r} \sigma_i^2 \,/\, \sum_i \sigma_i^2 \geq $ a threshold (e.g. $99.99\%$).
+\end{frame}
+
+\begin{frame}{Two ROM Forms (We Implemented Both)}
+  Once we have $V$ and the lifted system $\dot{z} = G(z)$, the reduced model can be written two ways.
+
+  \begin{columns}[T]
+    \begin{column}{0.49\textwidth}
+      \textbf{Simple (function-evaluating)}
+      \[
+        \dot{a} \;=\; V^{\top}\, G(\bar{z} + V a)
+      \]
+
+      \medskip
+      Pedagogically the cleanest. One line of code given $V$ and a callable $G$.
+
+      \medskip
+      Calls the full lifted RHS at every step of the reduced ODE: $O(N)$ work per step.
+    \end{column}
+    \begin{column}{0.49\textwidth}
+      \textbf{Explicit (operator-precomputed)}
+      \[
+        \dot{a} \;=\; \widehat{A}\, a + \widehat{H}\, (a \otimes a) + \widehat{c}
+      \]
+
+      \medskip
+      \[
+        \widehat{A} = V^{\top} A V,\;\; \widehat{H} = V^{\top} H (V \otimes V),\;\; \widehat{c} = V^{\top} c
+      \]
+
+      \medskip
+      Pre-compute once, then $O(r^2)$ work per step. Independent of $N$ at runtime.
+    \end{column}
+  \end{columns}
+
+  \medskip
+  Both produce identical $\dot{a}$ in our tests. The explicit form is the production path; the simple form is what we open the live demo with.
+\end{frame}
+
+\begin{frame}{Why $\widehat{H}$ Hurts: the $\mathrm{kron}(V, V)$ Wall}
+  The naive formula has a serious cost.
+  \[
+    \widehat{H} \;=\; V^{\top}\, H\, (V \otimes V).
+  \]
+
+  \medskip
+  Sizes: $V$ is $N \times r$, so $V \otimes V$ is $N^2 \times r^2$. For $N = 200$ and $r = 8$, that is a $40000 \times 64$ matrix. For $N = 1000$, it is $10^6$ rows.
+
+  \medskip
+  Forming $V \otimes V$ explicitly is the bottleneck, not the multiply.
+
+  \medskip
+  \begin{block}{Our solution: \texttt{QuadraticTensor}}
+    Store $H$ as $(i, p, q, \text{val})$ tuples, then iterate the contraction
+    \[
+      \widehat{H}_{\alpha \beta \gamma} \;=\; \sum_{(i, p, q)} V_{i \alpha}\, V_{p \beta}\, V_{q \gamma}\, H_{ipq}
+    \]
+    skipping zeros. No $\mathrm{kron}(V, V)$ ever materialized.
+  \end{block}
+\end{frame}
+
+\begin{frame}{Sparse Tensor Galerkin: One Diagram}
+  \[
+    H_{ipq}\;\;\text{nonzero only for a few}\;(p,q)\;\text{per}\;i.
+  \]
+
+  \begin{center}
+    \begin{tabular}{lcc}
+      \toprule
+      Representation             & Bytes for $\widehat{H}$ & Build time \\
+      \midrule
+      Dense $H \cdot (V \otimes V)$  & $O(r \cdot N^2)$  &  large \\
+      Sparse $H$, dense $V \otimes V$ & $O(r \cdot N^2)$  &  large \\
+      \texttt{QuadraticTensor}        & $O(\mathrm{nnz}(H) \cdot r^3)$ & moderate \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+
+  \medskip
+  In our benchmarks the tensor path is the only one that scales when $N$ exceeds a few hundred. All three paths agree numerically: a verified part of our test suite.
+
+  \medskip
+  Implementation lives in \texttt{src/learn/quadratic\_operator.jl} and \texttt{pod\_galerkin.jl}.
+\end{frame}
+
+\begin{frame}[fragile]{End-to-End Code}
+\begin{lstlisting}
+using SymbolicMOR, Symbolics, OrdinaryDiffEq
+
+@variables x y z
+rhs = [10.0*(y-x), x*(28.0-z) - y, x*y - (8/3)*z]
+ls  = lift_system([x, y, z], rhs)            # Phase 1
+
+# Snapshots from many ICs (Phase 3 will parallelize)
+G! = build_lifted_rhs(ls)
+u0s = [randn(3) .+ [1.0, 0.0, 25.0] for _ in 1:20]
+X   = generate_snapshots(G!, u0s, (0.0, 5.0))
+
+V, _, _ = compute_pod_basis(X, 4)             # Phase 2
+A, Q, c = extract_quadratic_tensor(ls)
+A_hat, Q_hat, c_hat = galerkin_project(A, Q, c, V)
+
+# Reduced ODE: 3 small operators, no full RHS calls
+prob = ODEProblem(rom_rhs!, V'*u0s[1], (0.0, 5.0),
+                  (A_hat, Q_hat, c_hat))
+\end{lstlisting}
+\end{frame}
+
+% ============================================================
+% PHASE 3: SCALE  (~3 min, ~3 slides)
+% ============================================================
+
+\begin{frame}{Phase 3: Scale. Snapshot Ensembles in Parallel}
+  Snapshot generation is embarrassingly parallel: each initial condition runs an independent ODE solve. We use \texttt{Distributed} so trajectories spread across workers (and across cluster nodes if available).
+
+  \medskip
+  \begin{itemize}
+    \item \texttt{generate\_snapshots\_parallel}: each worker integrates a disjoint subset of ICs.
+    \item \texttt{generate\_snapshots\_ensemble}: SciML \texttt{EnsembleProblem} backend, integrates with \texttt{EnsembleThreads} or \texttt{EnsembleDistributed}.
+    \item Both return a stacked snapshot matrix that feeds straight into the POD step.
+  \end{itemize}
+
+  \medskip
+  Per-trajectory cost dominates over reduction in serial; once parallel, reduction becomes the bottleneck. That motivated the tensor work in Phase 2.
+\end{frame}
+
+\begin{frame}{Benchmarks}
+  \begin{center}
+    \footnotesize
+    \begin{tabular}{lcccc}
+      \toprule
+      System                & $N$ orig & $N$ lifted & Aux added & ROM error vs full \\
+      \midrule
+      Cubic decay $\dot{x}=-x^3$ & 1   & 2   & 1  & $\sim 10^{-10}$ \\
+      Van der Pol               & 2   & 4   & 2  & $\sim 10^{-9}$  \\
+      Lorenz                    & 3   & 3   & 0  & $\sim 10^{-10}$ \\
+      Allen--Cahn (1D)          & $n$ & $2n$ & $n$ & $\sim 10^{-7}$  \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+
+  \medskip
+  Lift correctness verified by integrating both the lifted and unlifted systems with \texttt{Tsit5} at \texttt{abstol = reltol = 1e-10} and comparing the original-state slice. ROM error reflects the gap between the full lifted simulation and the reduced one at the same modes.
+
+  \medskip
+  Test suite: 596 tests, runs in ~3 s after package load. CI on every push.
+\end{frame}
+
+\begin{frame}{Tensor vs Dense Quadratic Evaluation}
+  Evaluate $H \, (z \otimes z)$ at lifted dimension $n$, with random sparsity $\mathrm{nnz}(H) = 4n$ (a regime typical of discretized PDEs after lifting).
+
+  \medskip
+  \begin{center}
+    \footnotesize
+    \begin{tabular}{rcccc}
+      \toprule
+      $n$ & dense $H \cdot \mathrm{kron}$ (ms) & \texttt{QuadraticTensor} (ms) & speedup & memory ratio \\
+      \midrule
+      40   & 0.004  & < 0.001 & 20x   & 100x   \\
+      80   & 0.066  & < 0.001 & 150x  & 400x   \\
+      160  & 0.734  & 0.001   & 780x  & 1600x  \\
+      320  & 7.55   & 0.002   & 4170x & 6400x  \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+
+  \medskip
+  Dense scales as $O(n^3)$. The tensor evaluation visits only the stored entries, so it stays roughly proportional to $\mathrm{nnz}(H)$ regardless of $n$. The same crossover applies to the \emph{reduced} operator $\widehat{H}$ once $r$ is large enough.
+
+  \medskip
+  Reproduce: \texttt{julia --project=. benchmarks/quadratic\_operator\_benchmark.jl}
+\end{frame}
+
+% ============================================================
+% Wrap-up
+% ============================================================
+
+\begin{frame}{What Worked, What Bit Us, What Is Next}
+  \textbf{Worked}
+  \begin{itemize}\setlength\itemsep{0pt}
+    \item Symbolics + SymbolicUtils made the algebra tractable. The chain-rule closures for the seven supported atoms are short.
+    \item Two ROM forms in the same library: a clear pedagogical contrast and a practical fast path.
+    \item Tensor representation kept the projection feasible for nontrivial $N$.
+  \end{itemize}
+
+  \medskip
+  \textbf{Bit us}
+  \begin{itemize}\setlength\itemsep{0pt}
+    \item Pattern-matching substitution misses subterms inside multi-arg products. Required expanding before substituting and deduplicating aux equations.
+    \item Numeric literals inside expanded expressions are wrapped (not bare \texttt{Number}) in SymbolicUtils 4.x. Custom polynomial-detection had to unwrap.
+  \end{itemize}
+
+  \medskip
+  \textbf{Next}
+  \begin{itemize}\setlength\itemsep{0pt}
+    \item More general non-polynomial atoms (rational, piecewise).
+    \item Automatic basis selection beyond fixed energy thresholds.
+    \item GPU kernels for the tensor contraction.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{References and Code}
+  \footnotesize
+  \begin{itemize}
+    \item Kramer \& Willcox (2019). \emph{Nonlinear Model Reduction via Lift \& Learn}. AIAA Journal.
+    \item Bychkov \& Pogudin (2021). \emph{Optimal Monomial Quadratization for ODE Systems}. arXiv:2103.08013.
+    \item Benner, Gugercin \& Willcox (2015). \emph{Survey of Projection-Based Model Reduction}. SIAM Review.
+  \end{itemize}
+
+  \medskip
+  \textbf{SymbolicMOR.jl}
+  \begin{itemize}
+    \item Repo: \texttt{github.com/elteomc/SymbolicMOR}, branch \texttt{quad-tensor-ops}.
+    \item Built on Symbolics.jl, ModelingToolkit.jl, OrdinaryDiffEq.jl, Distributed.
+    \item Documentation: \texttt{docs/} (Documenter.jl), live walkthrough in \texttt{scripts/lorenz\_demo.jl}.
+  \end{itemize}
+
+  \vspace{0.3cm}
+  \begin{center}
+    \large Questions?
+  \end{center}
+\end{frame}
+
+\end{document}
