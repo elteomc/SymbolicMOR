@@ -218,16 +218,22 @@ ls = lift_system([x], [tanh(x)])
   \]
 
   \medskip
-  Take the SVD $X = U \Sigma W^{\top}$. Keep the top $r$ left singular vectors:
+  \textbf{Mean-center} before SVD. Compute the average snapshot $\bar{z}$ and subtract:
   \[
-    V = U[:, 1{:}r] \in \mathbb{R}^{N \times r}.
+    \bar{z} \;=\; \frac{1}{K}\sum_{j=1}^{K} z(t_j),
+    \qquad
+    \widetilde{X} \;=\; X - \bar{z}\,\mathbf{1}^{\top}.
   \]
+  Then $\widetilde{X} = U\Sigma W^{\top}$, and $V = U[:, 1{:}r] \in \mathbb{R}^{N \times r}$ is the optimal rank-$r$ basis for the centered snapshots.
 
   \medskip
-  $V$ is the optimal rank-$r$ orthonormal basis for the snapshot data in the $L^2$ sense. The reduced state is $a \in \mathbb{R}^r$, with
+  Reconstruction of the lifted state and the reduced coordinates:
   \[
-    z \;\approx\; V a.
+    z \;\approx\; \bar{z} + V a,
+    \qquad
+    a \;=\; V^{\top}\,(z - \bar{z}).
   \]
+  $V$ captures deviations around the mean, which usually gives a better low-rank fit than uncentered POD. (Set $\bar{z} = 0$ to recover the uncentered formulation.)
 
   \medskip
   Energy retention: choose $r$ so that $\sum_{i \leq r} \sigma_i^2 \,/\, \sum_i \sigma_i^2 \geq $ a threshold (e.g. $99.99\%$).
@@ -356,26 +362,46 @@ prob = ODEProblem(rom_rhs!, V'*u0s[1], (0.0, 5.0),
   Per-trajectory cost dominates over reduction in serial; once parallel, reduction becomes the bottleneck. That motivated the tensor work in Phase 2.
 \end{frame}
 
-\begin{frame}{Benchmarks}
-  \begin{center}
-    \footnotesize
-    \begin{tabular}{lcccc}
-      \toprule
-      System                & $N$ orig & $N$ lifted & Aux added & ROM error vs full \\
-      \midrule
-      Cubic decay $\dot{x}=-x^3$ & 1   & 2   & 1  & $\sim 10^{-10}$ \\
-      Van der Pol               & 2   & 4   & 2  & $\sim 10^{-9}$  \\
-      Lorenz                    & 3   & 3   & 0  & $\sim 10^{-10}$ \\
-      Allen--Cahn (1D)          & $n$ & $2n$ & $n$ & $\sim 10^{-7}$  \\
-      \bottomrule
-    \end{tabular}
-  \end{center}
+\begin{frame}{Validation: Lift Accuracy and ROM Convergence}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{Lift accuracy.} Max trajectory error of the lifted system against the unlifted one over the test horizon, with \texttt{Tsit5} at \texttt{abstol = reltol = 1e-10}.
+
+      \medskip
+      \footnotesize
+      \begin{tabular}{lccc}
+        \toprule
+        System                  & $N$ lifted & Aux & Lift err \\
+        \midrule
+        Cubic decay $-x^3$      & 2 & 1 & $1.5{\cdot}10^{-10}$ \\
+        Van der Pol             & 3 & 1 & $3.2{\cdot}10^{-10}$ \\
+        Lorenz (already poly)   & 3 & 0 & $0$ \\
+        Allen--Cahn ($-u^3$)    & 2 & 1 & $1.2{\cdot}10^{-10}$ \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \textbf{ROM convergence on Lorenz.} Energy retained vs reduced-state ROM error over $t \in [0, 2]$, $K = 9624$ snapshots from $24$ initial conditions.
+
+      \medskip
+      \footnotesize
+      \begin{tabular}{ccc}
+        \toprule
+        $r$ & energy & ROM err \\
+        \midrule
+        1 & $0.82$ & $4.3{\cdot}10^{1}$ \\
+        2 & $0.99$ & $3.6{\cdot}10^{1}$ \\
+        3 & $1.00$ & $1.4{\cdot}10^{-9}$ \\
+        \bottomrule
+      \end{tabular}
+
+      \medskip
+      \scriptsize Lorenz is chaotic, so $r < 3$ ROMs lose phase quickly even with high energy retention. $r = 3$ recovers the full system to solver tolerance.
+    \end{column}
+  \end{columns}
 
   \medskip
-  Lift correctness verified by integrating both the lifted and unlifted systems with \texttt{Tsit5} at \texttt{abstol = reltol = 1e-10} and comparing the original-state slice. ROM error reflects the gap between the full lifted simulation and the reduced one at the same modes.
-
-  \medskip
-  Test suite: 596 tests, runs in ~3 s after package load. CI on every push.
+  Test suite: 596 tests, runs in $\sim$3 s after package load. CI on every push.
 \end{frame}
 
 \begin{frame}{Tensor vs Dense Quadratic Evaluation}
@@ -451,6 +477,72 @@ prob = ODEProblem(rom_rhs!, V'*u0s[1], (0.0, 5.0),
   \begin{center}
     \large Questions?
   \end{center}
+\end{frame}
+
+% ============================================================
+% Backup slides (appendix). Not counted toward the 16-minute budget.
+% Use them in Q&A.
+% ============================================================
+
+\appendix
+
+\begin{frame}{Backup: Which Functions Can We Lift?}
+  Lifting an atom $\phi(g)$ requires a finite chain-rule closure. We pick a small fresh state $p_1, p_2, \ldots$ such that each $\dot{p}_i$ is polynomial in the existing states.
+
+  \medskip
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Closes finitely (supported)}
+      \begin{itemize}\setlength\itemsep{0pt}
+        \item $\exp(g)$. Self-closing.
+        \item $\sin(g),\;\cos(g)$. Close as a pair.
+        \item $1/g,\;g^{-k}$. Self-closing.
+        \item $\log(g)$. Closes via $1/g$.
+        \item $\sqrt{g}$. Closes via $1/p$.
+        \item $\tanh(g)$. Self-closing via $(1 - p^2)$.
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Does not close finitely}
+      \begin{itemize}\setlength\itemsep{0pt}
+        \item $|x|$. Not differentiable at zero.
+        \item Piecewise functions. Need event handling, not algebraic closure.
+        \item $\arctan(g),\;\arcsin(g)$. Possible in principle (each closes through a rational extension), not yet implemented.
+        \item Arbitrary user functions. No general procedure.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+
+  \medskip
+  Adding a new closing atom is one rule in \texttt{src/lift/polynomialize.jl}: name the atom, give the chain-rule expression, register sibling atoms if needed.
+\end{frame}
+
+\begin{frame}{Backup: Greedy vs QBee Quadratization}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{What we use (greedy)}
+      \begin{itemize}\setlength\itemsep{0pt}
+        \item Locate a monomial of degree $> 2$.
+        \item Factor into variables, take the first two factors.
+        \item Replace them with a fresh aux $w_k = f_1 \cdot f_2$.
+        \item Repeat. Apply chain rule for each new $w_k$.
+      \end{itemize}
+      Simple, predictable, fast on the systems we tested. Can introduce more aux variables than strictly necessary.
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{QBee-style search (Bychkov \& Pogudin, 2021)}
+      \begin{itemize}\setlength\itemsep{0pt}
+        \item Searches the monomial structure globally.
+        \item Looks for the smallest set of aux monomials that closes the system.
+        \item Solved as integer programming over an explicit model.
+        \item Optimal in lifted dimension.
+      \end{itemize}
+      Heavier engineering. Wins when greedy gets stuck or balloons.
+    \end{column}
+  \end{columns}
+
+  \medskip
+  We did not implement QBee in the time we had. The dedup step in our quadratization (reuse an aux when the same product is requested twice) recovers some of QBee's economy in practice.
 \end{frame}
 
 \end{document}
