@@ -157,15 +157,34 @@ function _quadratize_monomial(mono::Num, vars::Vector{Num}, aux_eqs::Vector{Equa
 
   while length(factors) > 2
     f1, f2 = factors[1], factors[2]
-    counter[] += 1
-    w_sym = only(@variables $(Symbol("w$(counter[])")))
-    push!(aux_eqs, w_sym ~ f1 * f2)
-    push!(vars, w_sym)
+    candidate = Symbolics.expand(f1 * f2)
+    existing = _find_existing_aux_def(aux_eqs, candidate)
+    if existing !== nothing
+      w_sym = existing
+    else
+      counter[] += 1
+      w_sym = only(@variables $(Symbol("w$(counter[])")))
+      push!(aux_eqs, w_sym ~ candidate)
+      push!(vars, w_sym)
+    end
     factors = [w_sym; factors[3:end]]
   end
 
   result = coeff * prod(factors)
   return result, vars, aux_eqs
+end
+
+# Look up an existing aux whose RHS equals `candidate` after expansion.
+# Returns the aux LHS (the w-variable) if a match exists, else `nothing`.
+# Without this, identical products like `p1*p1` produced repeatedly by the
+# chain-rule loop would each get a fresh aux, never closing.
+function _find_existing_aux_def(aux_eqs::Vector{Equation}, candidate::Num)
+  for eq in aux_eqs
+    if isequal(Symbolics.expand(eq.rhs), candidate)
+      return eq.lhs
+    end
+  end
+  return nothing
 end
 
 """
@@ -186,8 +205,15 @@ end
 # Utility functions
 
 function _substitute_aux(expr::Num, aux_eqs::Vector{Equation})
+  # Symbolics.substitute matches subtrees structurally; without expanding,
+  # `p1*p1` and `p1^2` are different tree shapes and the substitution silently
+  # misses, which causes _quadratize_expr to keep manufacturing duplicate aux
+  # variables for the same product. Expand both sides into canonical form so
+  # the match fires reliably.
+  expr = Symbolics.expand(expr)
   for eq in aux_eqs
-    expr = Symbolics.substitute(expr, Dict(eq.rhs => eq.lhs))
+    key = Symbolics.expand(eq.rhs)
+    expr = Symbolics.expand(Symbolics.substitute(expr, Dict(key => eq.lhs)))
   end
 
   return Symbolics.simplify(expr)

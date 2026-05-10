@@ -7,6 +7,8 @@ Manifest.toml
 
 # Editor session exports / local tooling (never commit)
 .specstory/
+.devloop.jl
+.symor_repl/
 
 # Outputs
 *.png
