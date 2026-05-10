@@ -15,5 +15,17 @@ Manifest.toml
 *.pdf
 *.csv
 
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.nav
+*.snm
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.vrb
+
 # OS
 .DS_Store
